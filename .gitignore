@@ -14,7 +14,6 @@
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*
-!coverage.go
 *.coverprofile
 profile.cov
 
@@ -28,6 +27,18 @@ go.work.sum
 # env file
 .env
 
+# local runtime config + state
+config.yaml
+*.db
+*.db-shm
+*.db-wal
+
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# docker bind-mount state dir
+data/
+
+# local build
+/vinted-notifier
