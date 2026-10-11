@@ -5,6 +5,7 @@ matrix:
   room_id: "!abc:matrix.org"   # room to post notifications / accept commands
 vinted:
   domain: "www.vinted.pt"      # which Vinted site to search: www.vinted.fr, www.vinted.es, www.vinted.co.uk, ...
+  # countries: [PT, ES]        # only notify about sellers in these countries; omit = the domain's country, [ALL] = any
 poll:
   interval_seconds: 300        # global default poll cadence (minimum 30)
   max_pages: 2                 # pages fetched per search per poll (96 newest items/page)

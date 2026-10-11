@@ -55,7 +55,7 @@ func TestLivePollNotifies(t *testing.T) {
 	defer cancel()
 
 	rec := &recorder{}
-	p := New(st, vinted.NewClient(domain), rec, time.Minute, 0.1, 1)
+	p := New(st, vinted.NewClient(domain), rec, time.Minute, 0.1, 1, nil)
 
 	s, _, _ := st.GetSearch(id)
 	if err := p.pollOne(ctx, s); err != nil {
@@ -84,8 +84,11 @@ func TestLivePollNotifies(t *testing.T) {
 		t.Fatalf("expected >= 2 new events, got %d", len(rec.events))
 	}
 	for _, e := range rec.events {
-		t.Logf("%s — %s — %s — %d photo(s) — desc %d chars",
-			e.Item.Title, e.Item.PriceLabel(), e.Item.Details(), len(e.Item.Photos), len(e.Item.Description))
+		t.Logf("%s — %s — %s — %s — %d photo(s) — desc %d chars", e.Item.Title, e.Item.PriceLabel(),
+			e.Item.Details(), e.Item.LocationLabel(), len(e.Item.Photos), len(e.Item.Description))
+		if e.Item.Country == "" {
+			t.Errorf("item %d has no seller country", e.Item.ID)
+		}
 		if len(e.Item.Photos) == 0 || e.Item.Photos[0].Width == 0 {
 			t.Errorf("item %d not enriched with gallery photos", e.Item.ID)
 		}

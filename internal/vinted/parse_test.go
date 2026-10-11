@@ -140,3 +140,49 @@ func TestCleanDescription(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestParseCatalogSeller(t *testing.T) {
+	res, err := parseCatalog(fixture(t, "catalog.html"), testBase)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if res.Items[0].SellerID != 38580203 {
+		t.Errorf("seller id = %d", res.Items[0].SellerID)
+	}
+}
+
+func TestParseMemberPage(t *testing.T) {
+	cases := []struct {
+		file          string
+		code, country string
+		city          string
+	}{
+		{"member_it.html", "IT", "Itália", "Como"},
+		{"member_pt.html", "PT", "Portugal", ""}, // seller hides their city
+	}
+	for _, c := range cases {
+		s, err := parseMemberPage(fixture(t, c.file), 42)
+		if err != nil {
+			t.Errorf("%s: %v", c.file, err)
+			continue
+		}
+		if s.ID != 42 || s.CountryCode != c.code || s.Country != c.country || s.City != c.city {
+			t.Errorf("%s: got %+v", c.file, s)
+		}
+	}
+	if _, err := parseMemberPage(fixture(t, "item.html"), 1); !errors.Is(err, ErrLayout) {
+		t.Errorf("non-member page: err = %v, want ErrLayout", err)
+	}
+}
+
+func TestLocationLabel(t *testing.T) {
+	for _, c := range []struct{ city, country, want string }{
+		{"Como", "Itália", "Como, Itália"},
+		{"", "Portugal", "Portugal"},
+		{"", "", ""},
+	} {
+		if got := (Item{City: c.city, Country: c.country}).LocationLabel(); got != c.want {
+			t.Errorf("LocationLabel(%q, %q) = %q, want %q", c.city, c.country, got, c.want)
+		}
+	}
+}

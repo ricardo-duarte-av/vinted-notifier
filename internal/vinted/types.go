@@ -33,9 +33,22 @@ type Item struct {
 	Brand     string // e.g. "Apple iPhone 12" (the catalog card's first line)
 	Condition string // e.g. "Très bon état" (localised to the site)
 	Promoted  bool
+	SellerID  int64
 	Photos    []Photo
 
 	Description string
+
+	// Seller location, filled in from the seller's profile (see FetchSeller).
+	Country string // localised country name, e.g. "Itália"
+	City    string // only when the seller shows it on their profile
+}
+
+// Seller is the part of a seller profile the notifier uses.
+type Seller struct {
+	ID          int64
+	CountryCode string // ISO code, e.g. "PT"
+	Country     string // localised to the site, e.g. "Itália" on vinted.pt
+	City        string // "" when the seller hides it
 }
 
 // Money is a price as Vinted serves it: a decimal string plus ISO currency.
@@ -82,6 +95,18 @@ func (it Item) Details() string {
 		}
 	}
 	return strings.Join(parts, " · ")
+}
+
+// LocationLabel returns "City, Country", omitting any missing part.
+func (it Item) LocationLabel() string {
+	switch {
+	case it.City != "" && it.Country != "":
+		return it.City + ", " + it.Country
+	case it.City != "":
+		return it.City
+	default:
+		return it.Country
+	}
 }
 
 var currencySymbols = map[string]string{

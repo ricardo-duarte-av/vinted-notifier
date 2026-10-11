@@ -90,3 +90,40 @@ func TestDomainRequiredAndValidated(t *testing.T) {
 		}
 	}
 }
+
+func TestCountries(t *testing.T) {
+	cases := []struct {
+		domain, countries string
+		want              []string
+	}{
+		{"www.vinted.pt", "", []string{"PT"}},
+		{"www.vinted.fr", "", []string{"FR"}},
+		{"www.vinted.co.uk", "", []string{"GB"}},
+		{"www.vinted.pt", "  countries: [pt, es]\n", []string{"PT", "ES"}},
+		{"www.vinted.pt", "  countries: [ALL]\n", nil},
+		{"www.vinted.co.uk", "  countries: [uk]\n", []string{"UK", "GB"}},
+	}
+	for _, c := range cases {
+		cfg, err := load(t, baseConfig+"vinted:\n  domain: \""+c.domain+"\"\n"+c.countries)
+		if err != nil {
+			t.Errorf("%s %q: %v", c.domain, c.countries, err)
+			continue
+		}
+		got := cfg.Vinted.AllowedCountries
+		if len(got) != len(c.want) {
+			t.Errorf("%s %q: got %v want %v", c.domain, c.countries, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%s %q: got %v want %v", c.domain, c.countries, got, c.want)
+			}
+		}
+	}
+
+	for _, bad := range []string{"  countries: []\n", "  countries: [Portugal]\n"} {
+		if _, err := load(t, baseConfig+"vinted:\n  domain: www.vinted.pt\n"+bad); err == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+}

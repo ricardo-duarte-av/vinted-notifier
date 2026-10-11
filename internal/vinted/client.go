@@ -203,6 +203,15 @@ func (c *Client) FetchDetails(ctx context.Context, it *Item) error {
 	return nil
 }
 
+// FetchSeller fetches a seller's profile page for their location.
+func (c *Client) FetchSeller(ctx context.Context, id int64) (Seller, error) {
+	body, err := c.get(ctx, c.base+"/member/"+strconv.FormatInt(id, 10))
+	if err != nil {
+		return Seller{}, err
+	}
+	return parseMemberPage(body, id)
+}
+
 // catalogURL builds a newest-first catalog search URL.
 func (c *Client) catalogURL(p SearchParams, page int) string {
 	q := url.Values{}

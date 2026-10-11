@@ -38,15 +38,21 @@ type Poller struct {
 	jitter   float64 // fraction of interval, e.g. 0.1 for ±10%
 	maxPages int
 
+	// countries limits notifications to sellers in these ISO country codes;
+	// empty means every country.
+	countries []string
+
 	// Outage tracking, so a total failure is announced once rather than every
 	// tick, and recovery is announced too.
 	outageSince time.Time
 	lastAlertAt time.Time
 }
 
-// New builds a Poller. jitter spreads each tick by ±that fraction of interval.
-func New(st *store.Store, client *vinted.Client, n Notifier, interval time.Duration, jitter float64, maxPages int) *Poller {
-	return &Poller{store: st, client: client, notifier: n, interval: interval, jitter: jitter, maxPages: maxPages}
+// New builds a Poller. jitter spreads each tick by ±that fraction of interval;
+// countries limits notifications to sellers based there (empty = all).
+func New(st *store.Store, client *vinted.Client, n Notifier, interval time.Duration, jitter float64, maxPages int, countries []string) *Poller {
+	return &Poller{store: st, client: client, notifier: n, interval: interval, jitter: jitter,
+		maxPages: maxPages, countries: countries}
 }
 
 // nextInterval returns the interval with jitter applied, so repeated polls do
@@ -246,6 +252,7 @@ func (p *Poller) pollOne(ctx context.Context, s store.Search) error {
 		log.Printf("poller: reconcile search %d: %v", s.ID, err)
 		return nil
 	}
+	events = p.filterBySeller(ctx, s, events)
 	if len(events) == 0 {
 		return nil
 	}
@@ -253,6 +260,70 @@ func (p *Poller) pollOne(ctx context.Context, s store.Search) error {
 	p.addDetails(ctx, events)
 	p.notifier.Notify(ctx, s, events)
 	return nil
+}
+
+// filterBySeller looks up each event's seller location, adds it to the item
+// and drops events from sellers outside p.countries. Vinted's European sites
+// share one catalog and have no seller-country search filter, so this is the
+// only way to keep e.g. a vinted.pt search to Portuguese sellers.
+//
+// Only events are looked up, never every listing, and seller locations are
+// cached in the store. A failed lookup keeps the event: a stray foreign item
+// is better than a missed local one.
+func (p *Poller) filterBySeller(ctx context.Context, s store.Search, events []store.Event) []store.Event {
+	kept := events[:0]
+	dropped := 0
+	for _, e := range events {
+		seller, err := p.seller(ctx, e.Item.SellerID)
+		if err != nil {
+			log.Printf("poller: seller %d of item %d: %v", e.Item.SellerID, e.Item.ID, err)
+			kept = append(kept, e)
+			continue
+		}
+		e.Item.Country, e.Item.City = seller.Country, seller.City
+		if !p.allowedCountry(seller.CountryCode) {
+			dropped++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if dropped > 0 {
+		log.Printf("poller: search %d (%q): skipped %d item(s) from sellers outside %v",
+			s.ID, s.Query, dropped, p.countries)
+	}
+	return kept
+}
+
+// seller returns a seller's location, from the store's cache when fresh.
+func (p *Poller) seller(ctx context.Context, id int64) (vinted.Seller, error) {
+	if id == 0 {
+		return vinted.Seller{}, errors.New("item has no seller id")
+	}
+	if se, found, err := p.store.GetSeller(id); err != nil {
+		log.Printf("poller: seller cache read: %v", err)
+	} else if found {
+		return se, nil
+	}
+	se, err := p.client.FetchSeller(ctx, id)
+	if err != nil {
+		return vinted.Seller{}, err
+	}
+	if err := p.store.PutSeller(se); err != nil {
+		log.Printf("poller: seller cache write: %v", err)
+	}
+	return se, nil
+}
+
+func (p *Poller) allowedCountry(code string) bool {
+	if len(p.countries) == 0 {
+		return true
+	}
+	for _, c := range p.countries {
+		if c == code {
+			return true
+		}
+	}
+	return false
 }
 
 // addDetails fetches each event's item page for the description and full photo

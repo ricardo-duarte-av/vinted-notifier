@@ -83,10 +83,12 @@ func TestFormatEvent(t *testing.T) {
 		Brand:       "Apple iPhone 13",
 		Condition:   "Très bon état",
 		Description: "Comme neuf",
+		Country:     "France",
+		City:        "Lyon",
 	}
 
 	plain, htmlBody := formatEvent(s, store.Event{Type: store.EventNew, Item: it})
-	wantHead := "🆕 [#3] iPhone 13 <Pro> — 249.50 € · Apple iPhone 13 · Très bon état\nhttps://www.vinted.fr/items/1-iphone"
+	wantHead := "🆕 [#3] iPhone 13 <Pro> — 249.50 € · Apple iPhone 13 · Très bon état · 📍 Lyon, France\nhttps://www.vinted.fr/items/1-iphone"
 	if !strings.HasPrefix(plain, wantHead) {
 		t.Errorf("plain head:\n%s\nwant prefix:\n%s", plain, wantHead)
 	}

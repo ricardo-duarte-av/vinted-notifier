@@ -405,9 +405,9 @@ func (b *Bot) isModerator(ctx context.Context, user id.UserID) bool {
 }
 
 // Notify implements poller.Notifier: for each event it posts the item's main
-// photo with a caption (title, price, brand/condition, description), then
-// threads any extra photos as replies. Items without photos fall back to a text
-// message.
+// photo with a caption (title, price, brand/condition, location, description),
+// then threads any extra photos as replies. Items without photos fall back to a
+// text message.
 func (b *Bot) Notify(ctx context.Context, s store.Search, events []store.Event) {
 	for _, e := range events {
 		b.notifyOne(ctx, s, e)
@@ -576,9 +576,14 @@ const descriptionLimit = 300
 // line, the item link, and a truncated description.
 func formatEvent(s store.Search, e store.Event) (string, string) {
 	o := e.Item
-	detailSuffix := "" // brand and condition, e.g. " · Apple iPhone 12 · Très bon état"
+	// Brand, condition and seller location, e.g.
+	// " · Apple iPhone 12 · Muito bom · 📍 Porto, Portugal".
+	detailSuffix := ""
 	if d := o.Details(); d != "" {
 		detailSuffix = " · " + d
+	}
+	if loc := o.LocationLabel(); loc != "" {
+		detailSuffix += " · 📍 " + loc
 	}
 
 	var headPlain, headHTML string

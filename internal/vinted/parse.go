@@ -58,7 +58,10 @@ type catalogItem struct {
 		URL        string `json:"url"`
 		Price      *Money `json:"price"`
 		IsPromoted bool   `json:"isPromoted"`
-		Photos     []struct {
+		User       struct {
+			ID int64 `json:"id"`
+		} `json:"user"`
+		Photos []struct {
 			URL    string `json:"url"`
 			IsMain bool   `json:"isMain"`
 		} `json:"photos"`
@@ -118,6 +121,7 @@ func parseCatalog(page []byte, base string) (catalogResult, error) {
 			Brand:     defined(p.ItemBox.FirstLine),
 			Condition: defined(p.ItemBox.SecondLine),
 			Promoted:  p.IsPromoted,
+			SellerID:  p.User.ID,
 		}
 		if p.Price != nil {
 			it.Price = *p.Price
@@ -199,6 +203,48 @@ func parseItemPage(page []byte) (itemDetails, error) {
 		return itemDetails{}, fmt.Errorf("%w: no description or gallery on item page", ErrLayout)
 	}
 	return out, nil
+}
+
+// sellerAnchor occurs once on a member page, inside the seller's own user
+// object, just before the location fields.
+const sellerAnchor = `"expose_location":`
+
+// These match the seller's location fields, which follow sellerAnchor
+// within its user object.
+var (
+	sellerCountryCodeRe = regexp.MustCompile(`"country_code":"([A-Za-z]{2})"`)
+	sellerCountryRe     = regexp.MustCompile(`"country_title_local":"([^"\\]*)"`)
+	sellerCityRe        = regexp.MustCompile(`"city":"([^"\\]*)"`)
+)
+
+// sellerWindow bounds how far past sellerAnchor the location fields are looked
+// for, so a field from some other object on the page is never picked up.
+const sellerWindow = 4 << 10
+
+// parseMemberPage extracts the seller's location from their profile page.
+func parseMemberPage(page []byte, id int64) (Seller, error) {
+	payload, err := flightPayload(page)
+	if err != nil {
+		return Seller{}, err
+	}
+	i := strings.Index(payload, sellerAnchor)
+	if i < 0 {
+		return Seller{}, fmt.Errorf("%w: seller location not found on member page", ErrLayout)
+	}
+	win := payload[i:min(len(payload), i+sellerWindow)]
+
+	m := sellerCountryCodeRe.FindStringSubmatch(win)
+	if m == nil {
+		return Seller{}, fmt.Errorf("%w: seller country not found on member page", ErrLayout)
+	}
+	s := Seller{ID: id, CountryCode: strings.ToUpper(m[1])}
+	if m := sellerCountryRe.FindStringSubmatch(win); m != nil {
+		s.Country = m[1]
+	}
+	if m := sellerCityRe.FindStringSubmatch(win); m != nil {
+		s.City = m[1]
+	}
+	return s, nil
 }
 
 func absURL(base, path string) string {

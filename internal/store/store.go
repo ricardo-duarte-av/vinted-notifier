@@ -100,6 +100,13 @@ CREATE TABLE IF NOT EXISTS seen_items (
   last_seen  TEXT NOT NULL,
   PRIMARY KEY (search_id, item_id),
   FOREIGN KEY (search_id) REFERENCES searches(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS sellers (
+  id           INTEGER PRIMARY KEY,
+  country_code TEXT NOT NULL,
+  country      TEXT NOT NULL,
+  city         TEXT NOT NULL,
+  fetched_at   TEXT NOT NULL
 );`
 	_, err := s.db.Exec(schema)
 	return err
@@ -345,4 +352,38 @@ func toPtr(n sql.NullInt64) *int {
 	}
 	v := int(n.Int64)
 	return &v
+}
+
+// sellerTTL is how long a cached seller location is trusted; sellers rarely
+// move, but a city can be shown or hidden later.
+const sellerTTL = 30 * 24 * time.Hour
+
+// GetSeller returns a cached seller location, and whether a fresh one exists.
+func (s *Store) GetSeller(id int64) (vinted.Seller, bool, error) {
+	var (
+		se      = vinted.Seller{ID: id}
+		fetched string
+	)
+	err := s.db.QueryRow(`SELECT country_code, country, city, fetched_at FROM sellers WHERE id = ?`, id).
+		Scan(&se.CountryCode, &se.Country, &se.City, &fetched)
+	if err == sql.ErrNoRows {
+		return vinted.Seller{}, false, nil
+	}
+	if err != nil {
+		return vinted.Seller{}, false, err
+	}
+	if t, err := time.Parse(time.RFC3339, fetched); err != nil || time.Since(t) > sellerTTL {
+		return vinted.Seller{}, false, nil
+	}
+	return se, true, nil
+}
+
+// PutSeller caches a seller location.
+func (s *Store) PutSeller(se vinted.Seller) error {
+	_, err := s.db.Exec(
+		`INSERT INTO sellers (id, country_code, country, city, fetched_at) VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET country_code = excluded.country_code, country = excluded.country,
+		   city = excluded.city, fetched_at = excluded.fetched_at`,
+		se.ID, se.CountryCode, se.Country, se.City, time.Now().UTC().Format(time.RFC3339))
+	return err
 }

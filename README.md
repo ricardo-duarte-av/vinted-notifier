@@ -16,19 +16,17 @@ managed at runtime with `!vinted` commands in that room.
   - otherwise → ignored.
 - A newly added search is **seeded silently** on its first poll (all current
   items stored, no messages) so adding a search never floods the room.
-- For each item it is about to notify about, it fetches the item page for the
+- For each item it is about to notify about, it looks up the seller's country
+  (see [Seller countries](#seller-countries)) and fetches the item page for the
   description and full photo gallery (catalog results carry only the main
   photo), so the extra requests scale with events, not with listings.
 - Runs a Matrix client (mautrix-go) in the same process for commands + output.
 
 Each notification sends the item's **main photo** with a caption (title, price,
-brand, condition, truncated description) and a link. Any **additional photos**
+brand, condition, seller location, truncated description) and a link. Any **additional photos**
 are posted as replies **in a thread** under that message. Items with no photo
 fall back to a text message. Images are re-uploaded to your homeserver's media
 repo so they render inline in any client. Vinted serves photos as WebP.
-
-Vinted does not show a seller's location to logged-out visitors, so unlike
-olx-notifier the caption has no location.
 
 ## Choosing the Vinted site
 
@@ -43,6 +41,27 @@ decides:
 The European sites share one catalog, so the same listing usually appears on
 all of them with the same id. Category ids are shared too, though names are
 translated.
+
+## Seller countries
+
+Because the catalog is shared, a search on vinted.pt also returns items from
+sellers in Italy, France, Spain and so on, and Vinted's search has no
+seller-country filter. The notifier therefore filters on its side: before
+notifying about an item it reads the seller's country from their public profile
+(`/member/<id>`) and skips items from sellers outside `vinted.countries`.
+
+```yaml
+vinted:
+  domain: "www.vinted.pt"
+  countries: [PT, ES]   # omit = the domain's country only (PT here); [ALL] = no filter
+```
+
+- Seller locations are cached in the database for 30 days, so each seller costs
+  at most one extra request; only items about to be notified are looked up.
+- If a lookup fails, the item is notified anyway rather than silently lost.
+- The seller's city, when they choose to show it, is included in the caption.
+- Skipped items still count as seen (they show up in `!vinted list` counts) and
+  are logged as `skipped N item(s) from sellers outside [PT]`.
 
 ## Build
 
@@ -63,6 +82,7 @@ matrix:
   room_id: "!abc:matrix.org"
 vinted:
   domain: "www.vinted.pt"   # required; any Vinted site
+  # countries: [PT]         # seller countries to notify about; default = the domain's country
 poll:
   interval_seconds: 300     # minimum 30
   max_pages: 2              # pages per search per poll (96 newest items/page)

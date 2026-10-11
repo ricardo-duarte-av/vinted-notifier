@@ -8,6 +8,7 @@ import (
 	"flag"
 	"log"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,7 +43,8 @@ func main() {
 	}
 
 	p := poller.New(st, vc, bot,
-		time.Duration(cfg.Poll.IntervalSeconds)*time.Second, cfg.Poll.Jitter(), cfg.Poll.MaxPages)
+		time.Duration(cfg.Poll.IntervalSeconds)*time.Second, cfg.Poll.Jitter(), cfg.Poll.MaxPages,
+		cfg.Vinted.AllowedCountries)
 	bot.SetSeeder(p)
 
 	// Cancel everything on SIGINT/SIGTERM.
@@ -51,8 +53,12 @@ func main() {
 
 	go p.Run(ctx)
 
-	log.Printf("vinted-notifier started (site=%s, interval=%ds ±%.0f%%, db=%s)",
-		cfg.Vinted.Domain, cfg.Poll.IntervalSeconds, cfg.Poll.Jitter()*100, cfg.DBPath)
+	countries := "all"
+	if len(cfg.Vinted.AllowedCountries) > 0 {
+		countries = strings.Join(cfg.Vinted.AllowedCountries, ",")
+	}
+	log.Printf("vinted-notifier started (site=%s, seller countries=%s, interval=%ds ±%.0f%%, db=%s)",
+		cfg.Vinted.Domain, countries, cfg.Poll.IntervalSeconds, cfg.Poll.Jitter()*100, cfg.DBPath)
 	if err := bot.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatalf("matrix sync: %v", err)
 	}

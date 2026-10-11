@@ -215,3 +215,32 @@ func TestRemoveSearchCascades(t *testing.T) {
 		t.Errorf("expected cascade delete, %d rows remain", n)
 	}
 }
+
+func TestSellerCache(t *testing.T) {
+	s := openTemp(t)
+	if _, found, err := s.GetSeller(7); err != nil || found {
+		t.Fatalf("empty cache: found=%v err=%v", found, err)
+	}
+	want := vinted.Seller{ID: 7, CountryCode: "IT", Country: "Itália", City: "Como"}
+	if err := s.PutSeller(want); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.GetSeller(7)
+	if err != nil || !found || got != want {
+		t.Fatalf("got %+v found=%v err=%v", got, found, err)
+	}
+
+	// Stale entries read as missing so they get refetched.
+	if _, err := s.db.Exec(`UPDATE sellers SET fetched_at = '2000-01-01T00:00:00Z'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := s.GetSeller(7); found {
+		t.Error("stale seller still reported as cached")
+	}
+	if err := s.PutSeller(want); err != nil { // upsert over the stale row
+		t.Fatal(err)
+	}
+	if _, found, _ := s.GetSeller(7); !found {
+		t.Error("refreshed seller not found")
+	}
+}
