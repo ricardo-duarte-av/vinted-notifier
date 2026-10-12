@@ -61,7 +61,7 @@ vinted:
 - If a lookup fails, the item is notified anyway rather than silently lost.
 - The seller's city, when they choose to show it, is included in the caption.
 - Skipped items still count as seen (they show up in `!vinted list` counts) and
-  are logged as `skipped N item(s) from sellers outside [PT]`.
+  are logged per country, e.g. `skipped 4 item(s) from sellers outside [PT]: ES(2), FR(1), IT(1)`.
 
 ## Build
 

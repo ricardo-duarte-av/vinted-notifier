@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
@@ -272,7 +273,7 @@ func (p *Poller) pollOne(ctx context.Context, s store.Search) error {
 // is better than a missed local one.
 func (p *Poller) filterBySeller(ctx context.Context, s store.Search, events []store.Event) []store.Event {
 	kept := events[:0]
-	dropped := 0
+	dropped := map[string]int{} // seller country code → items skipped
 	for _, e := range events {
 		seller, err := p.seller(ctx, e.Item.SellerID)
 		if err != nil {
@@ -282,16 +283,40 @@ func (p *Poller) filterBySeller(ctx context.Context, s store.Search, events []st
 		}
 		e.Item.Country, e.Item.City = seller.Country, seller.City
 		if !p.allowedCountry(seller.CountryCode) {
-			dropped++
+			dropped[seller.CountryCode]++
 			continue
 		}
 		kept = append(kept, e)
 	}
-	if dropped > 0 {
-		log.Printf("poller: search %d (%q): skipped %d item(s) from sellers outside %v",
-			s.ID, s.Query, dropped, p.countries)
+	if len(dropped) > 0 {
+		n := 0
+		for _, c := range dropped {
+			n += c
+		}
+		log.Printf("poller: search %d (%q): skipped %d item(s) from sellers outside %v: %s",
+			s.ID, s.Query, n, p.countries, countryCounts(dropped))
 	}
 	return kept
+}
+
+// countryCounts renders skipped items per country, most first, e.g.
+// "ES(2), IT(1), PT(1)".
+func countryCounts(counts map[string]int) string {
+	codes := make([]string, 0, len(counts))
+	for c := range counts {
+		codes = append(codes, c)
+	}
+	sort.Slice(codes, func(i, j int) bool {
+		if counts[codes[i]] != counts[codes[j]] {
+			return counts[codes[i]] > counts[codes[j]]
+		}
+		return codes[i] < codes[j]
+	})
+	parts := make([]string, len(codes))
+	for i, c := range codes {
+		parts[i] = fmt.Sprintf("%s(%d)", c, counts[c])
+	}
+	return strings.Join(parts, ", ")
 }
 
 // seller returns a seller's location, from the store's cache when fresh.

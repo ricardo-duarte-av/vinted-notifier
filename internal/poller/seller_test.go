@@ -53,3 +53,10 @@ func TestFilterBySeller(t *testing.T) {
 		t.Fatalf("failed lookup dropped the event: %+v", got)
 	}
 }
+
+func TestCountryCounts(t *testing.T) {
+	got := countryCounts(map[string]int{"PT": 1, "ES": 2, "IT": 1})
+	if want := "ES(2), IT(1), PT(1)"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
