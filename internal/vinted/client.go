@@ -152,6 +152,10 @@ type Client struct {
 	mu   sync.Mutex
 	last time.Time // when the previous request was issued
 
+	// prevPage is the last page fetched successfully. Later requests name it
+	// as their Referer, like a browser following a link on the site.
+	prevPage string
+
 	// Bot-protection cooldown: no request is sent before blockedUntil.
 	blockedUntil time.Time
 	lastBlock    *StatusError
@@ -372,7 +376,10 @@ func (c *Client) doGet(ctx context.Context, reqURL string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.setBrowserHeaders(req)
+	c.mu.Lock()
+	referer := c.prevPage
+	c.mu.Unlock()
+	c.setBrowserHeaders(req, referer)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -398,13 +405,17 @@ func (c *Client) doGet(ctx context.Context, reqURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read vinted page: %w", err)
 	}
+	c.mu.Lock()
+	c.prevPage = reqURL
+	c.mu.Unlock()
 	return body, nil
 }
 
-// setBrowserHeaders makes the request look like a Chrome page navigation.
-// Accept-Encoding is left to net/http, which then transparently decompresses
-// gzip.
-func (c *Client) setBrowserHeaders(req *http.Request) {
+// setBrowserHeaders makes the request look like a Chrome page navigation:
+// typed into the address bar when referer is "", otherwise a link followed
+// from that page of the site. Accept-Encoding is left to net/http, which then
+// transparently decompresses gzip.
+func (c *Client) setBrowserHeaders(req *http.Request, referer string) {
 	h := req.Header
 	h.Set("User-Agent", userAgent)
 	h.Set("Sec-Ch-Ua", secCHUA)
@@ -412,10 +423,17 @@ func (c *Client) setBrowserHeaders(req *http.Request) {
 	h.Set("Sec-Ch-Ua-Platform", secCHUAPlatform)
 	h.Set("Upgrade-Insecure-Requests", "1")
 	h.Set("Accept", acceptHTML)
-	h.Set("Sec-Fetch-Site", "none")
+	if referer != "" {
+		h.Set("Sec-Fetch-Site", "same-origin")
+	} else {
+		h.Set("Sec-Fetch-Site", "none")
+	}
 	h.Set("Sec-Fetch-Mode", "navigate")
 	h.Set("Sec-Fetch-User", "?1")
 	h.Set("Sec-Fetch-Dest", "document")
+	if referer != "" {
+		h.Set("Referer", referer)
+	}
 	h.Set("Accept-Language", c.lang)
 	h.Set("Priority", "u=0, i")
 }

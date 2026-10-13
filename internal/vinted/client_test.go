@@ -196,6 +196,40 @@ func TestAcceptLanguage(t *testing.T) {
 	}
 }
 
+// TestRefererFollowsPreviousPage checks the first request looks typed in and
+// later ones look like links followed from the previous page.
+func TestRefererFollowsPreviousPage(t *testing.T) {
+	type seen struct{ referer, site string }
+	var got []seen
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, seen{r.Header.Get("Referer"), r.Header.Get("Sec-Fetch-Site")})
+		if r.URL.Path == "/missing" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	c := fastClient(srv)
+	for _, path := range []string{"/catalog", "/missing", "/items/1"} {
+		c.get(context.Background(), srv.URL+path)
+	}
+	want := []seen{
+		{"", "none"},
+		{srv.URL + "/catalog", "same-origin"},
+		{srv.URL + "/catalog", "same-origin"}, // a failed page is not a referer
+	}
+	if len(got) != len(want) {
+		t.Fatalf("requests = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("request %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
 // TestSearchPaginates serves the catalog fixture and checks the query string,
 // pagination stop and dedup across pages.
 func TestSearchPaginates(t *testing.T) {
