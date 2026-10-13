@@ -93,9 +93,17 @@ db_path: "./vinted.db"
 `config.yaml` and `*.db` are gitignored.
 
 Each poll waits `interval_seconds` ± `jitter_percent`, so the daemon does not
-hit Vinted on a perfectly regular beat. All requests go through one pacer
-(≥1.5 s apart) shared by polling and chat commands. A catalog page is about
-0.5 MB compressed, so each search costs roughly `max_pages × 0.5 MB` per poll.
+hit Vinted on a perfectly regular beat; the first poll after startup waits a
+random 0–2 minutes. All requests go through one pacer (a random 3–6 s apart)
+shared by polling and chat commands. A catalog page is about 0.5 MB
+compressed, so each search costs roughly `max_pages × 0.5 MB` per poll.
+
+Requests look like Chrome browsing the site: full Chrome headers, an
+`Accept-Language` matching the domain, cookies kept between requests, and a
+`Referer` to the previous page. If Vinted's bot protection (Cloudflare or
+DataDome) blocks a request anyway, it is not retried: all requests pause for
+30 minutes, doubling for each block in a row up to 4 hours, and the rest of
+that poll is skipped.
 
 If every search fails in a cycle — an outage, or Vinted's bot protection
 blocking this host — the bot posts a warning to the room and posts again once

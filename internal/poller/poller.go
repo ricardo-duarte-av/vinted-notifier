@@ -26,6 +26,11 @@ type Notifier interface {
 	Alert(ctx context.Context, text string)
 }
 
+// maxStartDelay caps the random wait before the first poll, so a restart (or
+// several in a row while editing the config) does not hit Vinted the instant
+// the process starts.
+const maxStartDelay = 2 * time.Minute
+
 // alertRepeat is how long to wait before repeating an ongoing outage alert, so
 // a long block does not post on every tick.
 const alertRepeat = time.Hour
@@ -70,9 +75,19 @@ func (p *Poller) nextInterval() time.Duration {
 	return time.Duration(d)
 }
 
-// Run polls all searches immediately, then on every interval tick until ctx is
-// cancelled.
+// Run polls all searches after a short random delay, then on every interval
+// tick until ctx is cancelled.
 func (p *Poller) Run(ctx context.Context) {
+	delay := min(maxStartDelay, p.interval)
+	if delay > 0 {
+		delay = time.Duration(rand.Int63n(int64(delay)))
+	}
+	log.Printf("poller: first poll in %s", delay.Round(time.Second))
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(delay):
+	}
 	p.pollAll(ctx)
 
 	// A timer rather than a ticker: each wait is re-jittered.

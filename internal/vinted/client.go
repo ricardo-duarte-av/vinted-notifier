@@ -30,10 +30,12 @@ const (
 	// perPage is the catalog page size; 96 is the most the site serves.
 	perPage = 96
 
-	// minRequestGap is the smallest spacing between two Vinted requests. All
-	// requests (poller and chat commands) funnel through one pacer so polling
-	// many searches never reads as a burst.
-	minRequestGap = 1500 * time.Millisecond
+	// minRequestGap is the smallest spacing between two Vinted requests, and
+	// up to requestGapJitter more is added at random so the spacing has no
+	// fixed beat. All requests (poller and chat commands) funnel through one
+	// pacer so polling many searches never reads as a burst.
+	minRequestGap    = 3 * time.Second
+	requestGapJitter = 3 * time.Second
 
 	// maxAttempts counts the first try plus retries for a throttled request.
 	maxAttempts = 4
@@ -146,6 +148,7 @@ type Client struct {
 
 	// Tunables, overridden in tests to keep them fast.
 	minGap      time.Duration
+	gapJitter   time.Duration
 	backoffBase time.Duration
 	cooldown    time.Duration
 
@@ -173,6 +176,7 @@ func NewClient(domain string) *Client {
 		base:        "https://" + domain,
 		lang:        acceptLanguage(domain),
 		minGap:      minRequestGap,
+		gapJitter:   requestGapJitter,
 		backoffBase: backoffBase,
 		cooldown:    blockCooldown,
 	}
@@ -281,11 +285,16 @@ func (c *Client) catalogURL(p SearchParams, page int) string {
 	return c.base + "/catalog?" + q.Encode()
 }
 
-// pace blocks until at least minGap has passed since the previous request, so
-// concurrent callers (poller plus chat commands) share one budget.
+// pace blocks until a random gap of minGap to minGap+gapJitter has passed
+// since the previous request, so concurrent callers (poller plus chat
+// commands) share one budget.
 func (c *Client) pace(ctx context.Context) error {
+	gap := c.minGap
+	if c.gapJitter > 0 {
+		gap += time.Duration(rand.Int63n(int64(c.gapJitter)))
+	}
 	c.mu.Lock()
-	wait := time.Until(c.last.Add(c.minGap))
+	wait := time.Until(c.last.Add(gap))
 	if wait < 0 {
 		wait = 0
 	}

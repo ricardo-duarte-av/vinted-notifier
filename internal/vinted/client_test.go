@@ -18,6 +18,7 @@ func fastClient(srv *httptest.Server) *Client {
 	c := NewClient("unused")
 	c.base = srv.URL
 	c.minGap = 5 * time.Millisecond
+	c.gapJitter = 0
 	c.backoffBase = 5 * time.Millisecond
 	return c
 }
