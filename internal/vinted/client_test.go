@@ -158,6 +158,30 @@ func TestEdgeBlockCoolsDown(t *testing.T) {
 	}
 }
 
+// TestKeepsCookies checks cookies the site sets are sent back on later
+// requests, as a browser would.
+func TestKeepsCookies(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ck, err := r.Cookie("__cf_bm"); err == nil {
+			got = append(got, ck.Value)
+		}
+		http.SetCookie(w, &http.Cookie{Name: "__cf_bm", Value: "token", Path: "/"})
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	c := fastClient(srv)
+	for i := 0; i < 2; i++ {
+		if _, err := c.get(context.Background(), srv.URL+"/catalog"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(got) != 1 || got[0] != "token" {
+		t.Fatalf("cookies sent back = %v, want [token] on the second request only", got)
+	}
+}
+
 // TestSearchPaginates serves the catalog fixture and checks the query string,
 // pagination stop and dedup across pages.
 func TestSearchPaginates(t *testing.T) {

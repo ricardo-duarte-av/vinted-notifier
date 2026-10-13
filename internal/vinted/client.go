@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strconv"
 	"strings"
@@ -151,8 +152,12 @@ type Client struct {
 
 // NewClient returns a Client for the given site host, e.g. "www.vinted.fr".
 func NewClient(domain string) *Client {
+	// A cookie jar makes the client a returning visitor: Cloudflare's __cf_bm
+	// and Vinted's session cookies come back on every later request, as they
+	// would from a browser. A client that never returns cookies is a bot tell.
+	jar, _ := cookiejar.New(nil) // never fails with nil options
 	return &Client{
-		http:        &http.Client{Timeout: 45 * time.Second},
+		http:        &http.Client{Timeout: 45 * time.Second, Jar: jar},
 		base:        "https://" + domain,
 		minGap:      minRequestGap,
 		backoffBase: backoffBase,
