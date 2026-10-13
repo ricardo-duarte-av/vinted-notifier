@@ -35,6 +35,12 @@ const (
 
 	// maxPageBytes caps a page download; catalog pages are ~4 MiB uncompressed.
 	maxPageBytes = 16 << 20
+
+	// blockCooldown is how long all requests pause after bot protection
+	// rejects one; it doubles for each block in a row, up to maxBlockCooldown.
+	// Retrying straight into a block is what keeps a short block going.
+	blockCooldown    = 30 * time.Minute
+	maxBlockCooldown = 4 * time.Hour
 )
 
 // StatusError is returned when Vinted answers with a non-200 status. It notes
@@ -92,6 +98,21 @@ func (e *StatusError) Throttled() bool {
 	return e.Code == http.StatusForbidden || e.Code == http.StatusTooManyRequests || e.Code >= 500
 }
 
+// CooldownError is returned without contacting Vinted while requests are
+// paused after a bot-protection block. It unwraps to that block's StatusError,
+// so callers treat it as the same edge block.
+type CooldownError struct {
+	Until time.Time
+	Block *StatusError
+}
+
+func (e *CooldownError) Error() string {
+	return fmt.Sprintf("vinted requests paused until %s after a bot-protection block (%v)",
+		e.Until.Format("15:04"), e.Block)
+}
+
+func (e *CooldownError) Unwrap() error { return e.Block }
+
 // detectBlocker identifies a bot-protection response from its headers and the
 // start of its body.
 func detectBlocker(code int, h http.Header, body []byte) string {
@@ -117,9 +138,15 @@ type Client struct {
 	// Tunables, overridden in tests to keep them fast.
 	minGap      time.Duration
 	backoffBase time.Duration
+	cooldown    time.Duration
 
 	mu   sync.Mutex
 	last time.Time // when the previous request was issued
+
+	// Bot-protection cooldown: no request is sent before blockedUntil.
+	blockedUntil time.Time
+	lastBlock    *StatusError
+	blocksInRow  int
 }
 
 // NewClient returns a Client for the given site host, e.g. "www.vinted.fr".
@@ -129,6 +156,7 @@ func NewClient(domain string) *Client {
 		base:        "https://" + domain,
 		minGap:      minRequestGap,
 		backoffBase: backoffBase,
+		cooldown:    blockCooldown,
 	}
 }
 
@@ -248,8 +276,45 @@ func (c *Client) pace(ctx context.Context) error {
 	return sleepCtx(ctx, wait)
 }
 
+// cooling returns a CooldownError while requests are paused after a block.
+func (c *Client) cooling() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Now().Before(c.blockedUntil) {
+		return &CooldownError{Until: c.blockedUntil, Block: c.lastBlock}
+	}
+	return nil
+}
+
+// noteBlock starts (or extends) the cooldown after a bot-protection block.
+func (c *Client) noteBlock(se *StatusError) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	d := c.cooldown << uint(min(c.blocksInRow, 8))
+	if d > maxBlockCooldown || d <= 0 {
+		d = maxBlockCooldown
+	}
+	if se.retryAfter > d {
+		d = se.retryAfter
+	}
+	c.blocksInRow++
+	c.lastBlock = se
+	c.blockedUntil = time.Now().Add(d)
+	log.Printf("vinted: blocked by %s bot protection (block %d in a row); pausing all requests for %s",
+		se.Blocker, c.blocksInRow, d)
+	return &CooldownError{Until: c.blockedUntil, Block: se}
+}
+
+// noteSuccess ends a run of blocks, so the next one starts a short cooldown.
+func (c *Client) noteSuccess() {
+	c.mu.Lock()
+	c.blocksInRow = 0
+	c.mu.Unlock()
+}
+
 // get fetches a page, pacing every attempt and retrying throttled responses
-// with backoff.
+// with backoff. A bot-protection block is not retried: it pauses every request
+// for a cooldown instead.
 func (c *Client) get(ctx context.Context, reqURL string) ([]byte, error) {
 	var lastErr error
 
@@ -258,6 +323,9 @@ func (c *Client) get(ctx context.Context, reqURL string) ([]byte, error) {
 			if err := sleepCtx(ctx, c.backoff(attempt, lastErr)); err != nil {
 				return nil, err
 			}
+		}
+		if err := c.cooling(); err != nil {
+			return nil, err
 		}
 		if err := c.pace(ctx); err != nil {
 			return nil, err
@@ -268,6 +336,7 @@ func (c *Client) get(ctx context.Context, reqURL string) ([]byte, error) {
 			if attempt > 0 {
 				log.Printf("vinted: recovered after %d attempt(s); previous error: %v", attempt+1, lastErr)
 			}
+			c.noteSuccess()
 			return body, nil
 		}
 		lastErr = err
@@ -275,6 +344,9 @@ func (c *Client) get(ctx context.Context, reqURL string) ([]byte, error) {
 		var se *StatusError
 		if !errors.As(err, &se) || !se.Throttled() {
 			return nil, err
+		}
+		if se.EdgeBlocked() {
+			return nil, c.noteBlock(se)
 		}
 	}
 

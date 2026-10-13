@@ -99,12 +99,16 @@ func (p *Poller) pollAll(ctx context.Context) {
 	var attempted, failed, edgeBlocked int
 	var lastErr error
 
+	var enabled []store.Search
 	for _, s := range searches {
+		if s.Enabled {
+			enabled = append(enabled, s)
+		}
+	}
+
+	for i, s := range enabled {
 		if ctx.Err() != nil {
 			return
-		}
-		if !s.Enabled {
-			continue
 		}
 		attempted++
 
@@ -114,10 +118,18 @@ func (p *Poller) pollAll(ctx context.Context) {
 
 			var se *vinted.StatusError
 			if errors.As(err, &se) && se.EdgeBlocked() {
-				edgeBlocked++
-				// Held back until the cycle ends: one summary beats one
-				// identical block message per search.
-				continue
+				// The block is host-wide and the client is now cooling
+				// down, so the remaining searches would fail the same way.
+				// Count them as blocked and leave Vinted alone until the
+				// next tick; one summary beats one message per search.
+				rest := len(enabled) - i - 1
+				attempted += rest
+				failed += rest
+				edgeBlocked += rest + 1
+				if rest > 0 {
+					log.Printf("poller: skipping the remaining %d search(es) this cycle after a bot-protection block", rest)
+				}
+				break
 			}
 			log.Printf("poller: search %d (%q): %v", s.ID, s.Query, err)
 		}

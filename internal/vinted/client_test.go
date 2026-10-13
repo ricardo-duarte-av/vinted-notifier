@@ -97,6 +97,67 @@ func TestDetectsBotProtection(t *testing.T) {
 	}
 }
 
+// TestEdgeBlockCoolsDown checks a bot-protection block is not retried, pauses
+// later requests without contacting Vinted, and lifts once the cooldown ends.
+func TestEdgeBlockCoolsDown(t *testing.T) {
+	var hits, blocked int32
+	atomic.StoreInt32(&blocked, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		if atomic.LoadInt32(&blocked) == 1 {
+			w.Header().Set("Cf-Mitigated", "challenge")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	c := fastClient(srv)
+	c.cooldown = 50 * time.Millisecond
+
+	_, err := c.get(context.Background(), srv.URL)
+	var ce *CooldownError
+	if !errors.As(err, &ce) {
+		t.Fatalf("err = %v, want CooldownError", err)
+	}
+	var se *StatusError
+	if !errors.As(err, &se) || !se.EdgeBlocked() {
+		t.Fatalf("cooldown error should unwrap to the edge block, got %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("hits = %d, want 1 (edge blocks are not retried)", got)
+	}
+
+	// During the cooldown nothing reaches the server.
+	if _, err := c.get(context.Background(), srv.URL); !errors.As(err, &ce) {
+		t.Fatalf("err = %v, want CooldownError", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("hits = %d, want 1 during cooldown", got)
+	}
+
+	// After it, a second block in a row doubles the pause.
+	time.Sleep(60 * time.Millisecond)
+	before := time.Now()
+	if _, err := c.get(context.Background(), srv.URL); !errors.As(err, &ce) {
+		t.Fatalf("err = %v, want CooldownError", err)
+	}
+	if d := ce.Until.Sub(before); d < 90*time.Millisecond {
+		t.Fatalf("second cooldown = %s, want about 100ms", d)
+	}
+
+	// Once unblocked, requests flow and the streak resets.
+	atomic.StoreInt32(&blocked, 0)
+	time.Sleep(110 * time.Millisecond)
+	if body, err := c.get(context.Background(), srv.URL); err != nil || string(body) != "ok" {
+		t.Fatalf("get = %q, %v", body, err)
+	}
+	if c.blocksInRow != 0 {
+		t.Fatalf("blocksInRow = %d after success, want 0", c.blocksInRow)
+	}
+}
+
 // TestSearchPaginates serves the catalog fixture and checks the query string,
 // pagination stop and dedup across pages.
 func TestSearchPaginates(t *testing.T) {
