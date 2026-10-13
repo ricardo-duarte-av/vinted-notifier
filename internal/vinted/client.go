@@ -18,7 +18,14 @@ import (
 )
 
 const (
-	userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+	// userAgent and the client hints below describe one browser (Chrome 140 on
+	// Linux); keep them in step when bumping the version.
+	userAgent       = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+	secCHUA         = `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`
+	secCHUAPlatform = `"Linux"`
+
+	// acceptHTML is Chrome's Accept header for a page navigation.
+	acceptHTML = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
 
 	// perPage is the catalog page size; 96 is the most the site serves.
 	perPage = 96
@@ -135,6 +142,7 @@ func detectBlocker(code int, h http.Header, body []byte) string {
 type Client struct {
 	http *http.Client
 	base string // e.g. "https://www.vinted.fr"
+	lang string // Accept-Language of a local visitor, e.g. "pt-PT,pt;q=0.9,..."
 
 	// Tunables, overridden in tests to keep them fast.
 	minGap      time.Duration
@@ -159,6 +167,7 @@ func NewClient(domain string) *Client {
 	return &Client{
 		http:        &http.Client{Timeout: 45 * time.Second, Jar: jar},
 		base:        "https://" + domain,
+		lang:        acceptLanguage(domain),
 		minGap:      minRequestGap,
 		backoffBase: backoffBase,
 		cooldown:    blockCooldown,
@@ -363,7 +372,7 @@ func (c *Client) doGet(ctx context.Context, reqURL string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	setBrowserHeaders(req)
+	c.setBrowserHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -392,16 +401,49 @@ func (c *Client) doGet(ctx context.Context, reqURL string) ([]byte, error) {
 	return body, nil
 }
 
-// setBrowserHeaders makes the request look like a browser navigation. Accept-
-// Encoding is left to net/http, which then transparently decompresses gzip.
-func setBrowserHeaders(req *http.Request) {
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en;q=0.9,*;q=0.5")
-	req.Header.Set("Sec-Fetch-Dest", "document")
-	req.Header.Set("Sec-Fetch-Mode", "navigate")
-	req.Header.Set("Sec-Fetch-Site", "none")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
+// setBrowserHeaders makes the request look like a Chrome page navigation.
+// Accept-Encoding is left to net/http, which then transparently decompresses
+// gzip.
+func (c *Client) setBrowserHeaders(req *http.Request) {
+	h := req.Header
+	h.Set("User-Agent", userAgent)
+	h.Set("Sec-Ch-Ua", secCHUA)
+	h.Set("Sec-Ch-Ua-Mobile", "?0")
+	h.Set("Sec-Ch-Ua-Platform", secCHUAPlatform)
+	h.Set("Upgrade-Insecure-Requests", "1")
+	h.Set("Accept", acceptHTML)
+	h.Set("Sec-Fetch-Site", "none")
+	h.Set("Sec-Fetch-Mode", "navigate")
+	h.Set("Sec-Fetch-User", "?1")
+	h.Set("Sec-Fetch-Dest", "document")
+	h.Set("Accept-Language", c.lang)
+	h.Set("Priority", "u=0, i")
+}
+
+// siteLanguages maps a Vinted site's TLD to the language of its local
+// visitors, so Accept-Language matches the site being browsed.
+var siteLanguages = map[string]string{
+	"at": "de-AT", "be": "fr-BE", "co.uk": "en-GB", "com": "en-US", "cz": "cs-CZ",
+	"de": "de-DE", "dk": "da-DK", "ee": "et-EE", "es": "es-ES", "fi": "fi-FI",
+	"fr": "fr-FR", "gr": "el-GR", "hr": "hr-HR", "hu": "hu-HU", "ie": "en-IE",
+	"it": "it-IT", "lt": "lt-LT", "lu": "fr-LU", "lv": "lv-LV", "nl": "nl-NL",
+	"pl": "pl-PL", "pt": "pt-PT", "ro": "ro-RO", "se": "sv-SE", "si": "sl-SI",
+	"sk": "sk-SK",
+}
+
+// acceptLanguage returns a Chrome-style Accept-Language for a local visitor
+// of the given site, e.g. "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7".
+func acceptLanguage(domain string) string {
+	tld, _ := strings.CutPrefix(domain, "www.vinted.")
+	tag, ok := siteLanguages[tld]
+	if !ok || strings.HasPrefix(tag, "en-") {
+		if !ok {
+			tag = "en-US"
+		}
+		return tag + ",en;q=0.9"
+	}
+	base, _, _ := strings.Cut(tag, "-")
+	return tag + "," + base + ";q=0.9,en-US;q=0.8,en;q=0.7"
 }
 
 // backoff returns how long to wait before the given attempt (1-based retry

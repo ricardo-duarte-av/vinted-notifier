@@ -182,6 +182,20 @@ func TestKeepsCookies(t *testing.T) {
 	}
 }
 
+// TestAcceptLanguage checks the language follows the site.
+func TestAcceptLanguage(t *testing.T) {
+	for domain, want := range map[string]string{
+		"www.vinted.pt":    "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+		"www.vinted.fr":    "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+		"www.vinted.co.uk": "en-GB,en;q=0.9",
+		"unused":           "en-US,en;q=0.9",
+	} {
+		if got := acceptLanguage(domain); got != want {
+			t.Errorf("acceptLanguage(%q) = %q, want %q", domain, got, want)
+		}
+	}
+}
+
 // TestSearchPaginates serves the catalog fixture and checks the query string,
 // pagination stop and dedup across pages.
 func TestSearchPaginates(t *testing.T) {
